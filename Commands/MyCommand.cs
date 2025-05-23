@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -1058,7 +1059,7 @@ namespace MethodCopier
             }
         }
 
-        private static async Task<SyntaxNode> GetMethodSyntaxAsync(IMethodSymbol method, Microsoft.CodeAnalysis.Solution solution)
+        private static async Task<SyntaxNode> GetMethodSyntaxAsync2(IMethodSymbol method, Microsoft.CodeAnalysis.Solution solution)
         {
             if (method.DeclaringSyntaxReferences.IsEmpty)
                 return null;
@@ -1111,6 +1112,162 @@ namespace MethodCopier
         }
 
         private static async Task<string> GenerateSourceWithDependenciesAsync(
+            IEnumerable<IMethodSymbol> methods, Microsoft.CodeAnalysis.Solution solution)
+        {
+            // Group methods by their containing class
+            var classes = methods
+                .Where(m => m.ContainingType != null)
+                .GroupBy(m => m.ContainingType)
+                .OrderBy(g => g.Key?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+
+            var sb = new StringBuilder();
+
+            // Track processed namespaces and classes
+            var processedNamespaces = new HashSet<string>();
+            var processedClasses = new HashSet<ITypeSymbol>();
+
+            foreach (var classGroup in classes)
+            {
+                var typeSymbol = classGroup.Key;
+                var methodsInClass = classGroup.ToList();
+
+                // Add namespace declaration if not already added
+                if (typeSymbol.ContainingNamespace != null)
+                {
+                    var ns = typeSymbol.ContainingNamespace.ToDisplayString();
+                    if (processedNamespaces.Add(ns))
+                    {
+                        sb.AppendLine($"namespace {ns}");
+                        sb.AppendLine("{");
+                    }
+                }
+
+                // Add class declaration
+                if (processedClasses.Add(typeSymbol))
+                {
+                    sb.AppendLine($"    {GetTypeDeclaration(typeSymbol)}");
+                    sb.AppendLine("    {");
+                }
+
+                // Add all methods for this class
+                foreach (var method in methodsInClass.OrderBy(m => m.Name))
+                {
+                    var syntax = await GetMethodSyntaxAsync(method, solution);
+                    if (syntax != null)
+                    {
+                        var formattedMethod = Formatter.Format(syntax, solution.Workspace)
+                            .ToFullString()
+                            .Replace("\n", "\n        "); // Indent method body
+
+                        sb.AppendLine($"        {formattedMethod}");
+                        sb.AppendLine();
+                    }
+                }
+
+                // Close class brace
+                sb.AppendLine("    }");
+
+                // Close namespace brace if no more classes in this namespace
+                if (typeSymbol.ContainingNamespace != null)
+                {
+                    var ns = typeSymbol.ContainingNamespace.ToDisplayString();
+                    if (!classes.Any(c => c.Key.ContainingNamespace?.ToDisplayString() == ns &&
+                                        !processedClasses.Contains(c.Key)))
+                    {
+                        sb.AppendLine("}");
+                        sb.AppendLine();
+                    }
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        private static string GetTypeDeclaration(ITypeSymbol typeSymbol)
+        {
+            var kind = typeSymbol.TypeKind switch
+            {
+                TypeKind.Class => "class",
+                TypeKind.Struct => "struct",
+                TypeKind.Interface => "interface",
+                _ => "class"
+            };
+
+            var baseTypes = new List<string>();
+
+            if (typeSymbol.BaseType != null &&
+                typeSymbol.BaseType.SpecialType != SpecialType.System_Object)
+            {
+                baseTypes.Add(typeSymbol.BaseType.ToDisplayString());
+            }
+
+            baseTypes.AddRange(typeSymbol.Interfaces.Select(i => i.ToDisplayString()));
+
+            var baseClause = baseTypes.Any()
+                ? $" : {string.Join(", ", baseTypes)}"
+                : string.Empty;
+
+            return $"{kind} {typeSymbol.Name}{baseClause}";
+        }
+
+        private static async Task<SyntaxNode> GetMethodSyntaxAsync(IMethodSymbol method, Microsoft.CodeAnalysis.Solution solution)
+        {
+            var reference = method.DeclaringSyntaxReferences.FirstOrDefault();
+            if (reference == null) return null;
+
+            return await reference.GetSyntaxAsync();
+        }
+
+
+
+
+
+
+
+        private static async Task<string> GenerateSourceWithDependenciesAsync2(
+            IEnumerable<IMethodSymbol> methods, Microsoft.CodeAnalysis.Solution solution)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("// =============================================");
+            sb.AppendLine("// COPIED METHODS WITH DEPENDENCIES");
+            sb.AppendLine($"// Generated on {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine("// =============================================");
+            sb.AppendLine();
+
+            foreach (var method in methods.OrderBy(m => m.ContainingType?.Name).ThenBy(m => m.Name))
+            {
+                var syntaxReference = method.DeclaringSyntaxReferences.FirstOrDefault();
+                if (syntaxReference == null) continue;
+
+                var syntaxNode = await syntaxReference.GetSyntaxAsync();
+                var document = solution.GetDocument(syntaxReference.SyntaxTree);
+
+                if (document == null) continue;
+
+                // Get source file information
+                var filePath = document.FilePath;
+                var fileName = Path.GetFileName(filePath);
+                var lineSpan = syntaxReference.SyntaxTree.GetLineSpan(syntaxReference.Span);
+                var lineNumber = lineSpan.StartLinePosition.Line + 1;
+
+                // Add header comment
+                sb.AppendLine("// =============================================");
+                sb.AppendLine($"// Method: {method.ContainingType?.Name}.{method.Name}");
+                sb.AppendLine($"// File: {fileName}");
+                sb.AppendLine($"// Location: Line {lineNumber}");
+                sb.AppendLine($"// Project: {document.Project.Name}");
+                sb.AppendLine("// =============================================");
+
+                // Add the actual method code
+                var formattedNode = Formatter.Format(syntaxNode, solution.Workspace);
+                sb.AppendLine(formattedNode.ToFullString());
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
+        }
+
+        private static async Task<string> GenerateSourceWithDependenciesAsync1(
             IEnumerable<IMethodSymbol> methods, Microsoft.CodeAnalysis.Solution solution)
         {
             var sb = new StringBuilder();
