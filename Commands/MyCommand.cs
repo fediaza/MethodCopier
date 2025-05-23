@@ -13,7 +13,6 @@ using Microsoft.CodeAnalysis.Text;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Text;
-using Solution = Microsoft.CodeAnalysis.Solution;
 /*
 namespace MethodCopier
 {
@@ -1113,7 +1112,99 @@ namespace MethodCopier
         }
 
         private static async Task<string> GenerateSourceWithDependenciesAsync(
-    IEnumerable<IMethodSymbol> methods, Solution solution)
+    IEnumerable<IMethodSymbol> methods, Microsoft.CodeAnalysis.Solution solution)
+        {
+            var classes = methods
+                .Where(m => m.ContainingType != null)
+                .GroupBy(m => m.ContainingType)
+                .OrderBy(g => g.Key?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                .ToList();
+
+            var sb = new StringBuilder();
+            var processedNamespaces = new HashSet<string>();
+            var processedClasses = new HashSet<ITypeSymbol>();
+
+            foreach (var classGroup in classes)
+            {
+                var typeSymbol = classGroup.Key;
+                var methodsInClass = classGroup.Distinct().ToList();
+
+                // Skip system namespace visualization for external types
+                bool isExternal = typeSymbol.Locations.All(loc => loc.IsInMetadata);
+                string ns = typeSymbol.ContainingNamespace?.ToDisplayString();
+
+                if (!isExternal && !string.IsNullOrEmpty(ns) && processedNamespaces.Add(ns))
+                {
+                    sb.AppendLine($"namespace {ns}");
+                    sb.AppendLine("{");
+                }
+
+                // Class/interface/struct declaration
+                if (processedClasses.Add(typeSymbol))
+                {
+                    if (isExternal)
+                    {
+                        sb.AppendLine($"// External type from assembly: {typeSymbol.ContainingAssembly?.Name}");
+                    }
+                    sb.AppendLine($"    {GetTypeDeclaration(typeSymbol)}");
+                    sb.AppendLine("    {");
+                }
+
+                foreach (var method in methodsInClass.OrderBy(m => m.Name))
+                {
+                    if (method.Locations.Any(loc => loc.IsInSource))
+                    {
+                        // Process source-available methods normally
+                        var syntax = await GetMethodSyntaxAsync(method, solution);
+                        if (syntax != null)
+                        {
+                            var formattedMethod = Formatter.Format(syntax, solution.Workspace)
+                                .ToFullString()
+                                .Replace("\n", "\n        ");
+
+                            sb.AppendLine($"        {formattedMethod}");
+                        }
+                    }
+                    else
+                    {
+                        // Generate signature for external methods
+                        sb.AppendLine($"        {GetMethodSignature(method)}");
+                        sb.AppendLine($"        {{ \n    throw new NotImplementedException(\"Original implementation in {method.ContainingAssembly?.Name}\"); \n }}        ");
+                    }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("    }");
+        
+        if (!isExternal && !string.IsNullOrEmpty(ns) && 
+            !classes.Any(c => c.Key.ContainingNamespace?.ToDisplayString() == ns && 
+                            !processedClasses.Contains(c.Key)))
+        {
+            sb.AppendLine("}");
+            sb.AppendLine();
+        }
+}
+
+return sb.ToString();
+}
+
+private static string GetMethodSignature(IMethodSymbol method)
+{
+    var accessibility = method.DeclaredAccessibility.ToString().ToLower();
+    var returnType = method.ReturnType.ToDisplayString();
+    var parameters = string.Join(", ", method.Parameters.Select(p =>
+        $"{p.Type.ToDisplayString()} {p.Name}"));
+
+    var modifiers = new List<string>();
+    if (method.IsStatic) modifiers.Add("static");
+    if (method.IsVirtual) modifiers.Add("virtual");
+    if (method.IsAsync) modifiers.Add("async");
+
+    return $"{accessibility} {string.Join(" ", modifiers)} {returnType} {method.Name}({parameters})";
+}
+
+private static async Task<string> GenerateSourceWithDependenciesAsync4(
+    IEnumerable<IMethodSymbol> methods, Microsoft.CodeAnalysis.Solution solution)
         {
             var classes = methods
                 .Where(m => m.ContainingType != null)
