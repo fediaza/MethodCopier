@@ -13,6 +13,7 @@ using Microsoft.CodeAnalysis.Text;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Text;
+using Solution = Microsoft.CodeAnalysis.Solution;
 /*
 namespace MethodCopier
 {
@@ -1112,6 +1113,102 @@ namespace MethodCopier
         }
 
         private static async Task<string> GenerateSourceWithDependenciesAsync(
+    IEnumerable<IMethodSymbol> methods, Solution solution)
+        {
+            var classes = methods
+                .Where(m => m.ContainingType != null)
+                .GroupBy(m => m.ContainingType)
+                .OrderBy(g => g.Key?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                .ToList();
+
+            var sb = new StringBuilder();
+            var processedNamespaces = new HashSet<string>();
+            var processedClasses = new HashSet<ITypeSymbol>();
+
+            // Initialize progress
+            int totalClasses = classes.Count;
+            int processedClassesCount = 0;
+
+            foreach (var classGroup in classes)
+            {
+                processedClassesCount++;
+                var typeSymbol = classGroup.Key;
+                var methodsInClass = classGroup.Distinct().ToList();
+
+                // Update progress - file level
+                await VS.StatusBar.ShowProgressAsync(
+                    $"Processing {typeSymbol.Name}",
+                    processedClassesCount,
+                    totalClasses);
+
+                // Process namespace
+                if (typeSymbol.ContainingNamespace != null)
+                {
+                    var ns = typeSymbol.ContainingNamespace.ToDisplayString();
+                    if (processedNamespaces.Add(ns))
+                    {
+                        sb.AppendLine($"namespace {ns}");
+                        sb.AppendLine("{");
+                    }
+                }
+
+                // Process class
+                if (processedClasses.Add(typeSymbol))
+                {
+                    sb.AppendLine($"    {GetTypeDeclaration(typeSymbol)}");
+                    sb.AppendLine("    {");
+                }
+
+                // Process methods with method-level progress
+                int totalMethods = methodsInClass.Count;
+                int processedMethods = 0;
+
+                foreach (var method in methodsInClass.OrderBy(m => m.Name))
+                {
+                    processedMethods++;
+
+                    // Only update progress every N items to reduce UI overhead
+                    if (processedClassesCount % 5 == 0 || processedClassesCount == totalClasses)
+                    {
+                        await VS.StatusBar.ShowProgressAsync(
+                            $"Processing {typeSymbol.Name}.{method.Name}",
+                            processedMethods,
+                            totalMethods);
+                    }
+
+                    var syntax = await GetMethodSyntaxAsync(method, solution);
+                    if (syntax != null)
+                    {
+                        var formattedMethod = Formatter.Format(syntax, solution.Workspace)
+                            .ToFullString()
+                            .Replace("\n", "\n        ");
+
+                        sb.AppendLine($"        {formattedMethod}");
+                        sb.AppendLine();
+                    }
+                }
+
+                // Close class
+                sb.AppendLine("    }");
+
+                // Close namespace if done
+                if (typeSymbol.ContainingNamespace != null)
+                {
+                    var ns = typeSymbol.ContainingNamespace.ToDisplayString();
+                    if (!classes.Any(c => c.Key.ContainingNamespace?.ToDisplayString() == ns &&
+                                        !processedClasses.Contains(c.Key)))
+                    {
+                        sb.AppendLine("}");
+                        sb.AppendLine();
+                    }
+                }
+            }
+
+            await VS.StatusBar.EndAnimationAsync(StatusAnimation.Save);
+            return sb.ToString();
+        }
+
+        private static async Task<string> GenerateSourceWithDependenciesAsync3(
             IEnumerable<IMethodSymbol> methods, Microsoft.CodeAnalysis.Solution solution)
         {
             // Group methods by their containing class
