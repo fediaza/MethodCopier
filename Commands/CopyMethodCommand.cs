@@ -315,52 +315,6 @@ namespace MethodCopier
 
             return await reference.GetSyntaxAsync();
         }
-
-
-
-        private static async Task<string> GenerateSourceWithDependenciesAsync2(
-            IEnumerable<IMethodSymbol> methods, Solution solution)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("// =============================================");
-            sb.AppendLine("// COPIED METHODS WITH DEPENDENCIES");
-            sb.AppendLine($"// Generated on {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine("// =============================================");
-            sb.AppendLine();
-
-            foreach (var method in methods.OrderBy(m => m.ContainingType?.Name).ThenBy(m => m.Name))
-            {
-                var syntaxReference = method.DeclaringSyntaxReferences.FirstOrDefault();
-                if (syntaxReference == null) continue;
-
-                var syntaxNode = await syntaxReference.GetSyntaxAsync();
-                var document = solution.GetDocument(syntaxReference.SyntaxTree);
-
-                if (document == null) continue;
-
-                // Get source file information
-                var filePath = document.FilePath;
-                var fileName = Path.GetFileName(filePath);
-                var lineSpan = syntaxReference.SyntaxTree.GetLineSpan(syntaxReference.Span);
-                var lineNumber = lineSpan.StartLinePosition.Line + 1;
-
-                // Add header comment
-                sb.AppendLine("// =============================================");
-                sb.AppendLine($"// Method: {method.ContainingType?.Name}.{method.Name}");
-                sb.AppendLine($"// File: {fileName}");
-                sb.AppendLine($"// Location: Line {lineNumber}");
-                sb.AppendLine($"// Project: {document.Project.Name}");
-                sb.AppendLine("// =============================================");
-
-                // Add the actual method code
-                var formattedNode = Formatter.Format(syntaxNode, solution.Workspace);
-                sb.AppendLine(formattedNode.ToFullString());
-                sb.AppendLine();
-            }
-
-            return sb.ToString();
-        }
-
     }
 
     public static class TextBufferExtensions

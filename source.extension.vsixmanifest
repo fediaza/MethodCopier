@@ -3,9 +3,10 @@
     <Metadata>
         <Identity Id="MethodCopier.d3965a1f-aaaf-45cb-afa6-42404f7d854a" Version="1.0" Language="en-US" Publisher="Fidel Ernesto Diaz Andino" />
         <DisplayName>MethodCopier</DisplayName>
-        <Description xml:space="preserve">Copy a method with all dependencies</Description>
+        <Description xml:space="preserve">Copy a method along with all its dependencies — including private submethods, fields, and required types — and generate a self-contained class that preserves the method's full functionality</Description>
         <Icon>Resources\Icon.png</Icon>
         <PreviewImage>Resources\Icon.png</PreviewImage>
+        <Preview>true</Preview>
     </Metadata>
     <Installation>
         <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 18.0)">

@@ -10,11 +10,11 @@ namespace MethodCopier
     {
         public const string Id = "MethodCopier.d3965a1f-aaaf-45cb-afa6-42404f7d854a";
         public const string Name = "MethodCopier";
-        public const string Description = @"Copy a method with all dependencies";
+        public const string Description = @"Copy a method along with all its dependencies — including private submethods, fields, and required types — and generate a self-contained class that preserves the method's full functionality";
         public const string Language = "en-US";
         public const string Version = "1.0";
         public const string Author = "Fidel Ernesto Diaz Andino";
         public const string Tags = "";
-        public const bool IsPreview = false;
+        public const bool IsPreview = true;
     }
 }
