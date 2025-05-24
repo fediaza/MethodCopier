@@ -9,7 +9,7 @@
   <Commands package="MethodCopier">
     <Groups>
       <Group guid="MethodCopier" id="MyMenuGroup" priority="0x0600">
-        <Parent guid="VSMainMenu" id="Tools"/>
+		<Parent guid="VSMainMenu" id="Edit"/>
       </Group>
     </Groups>
 
@@ -21,7 +21,8 @@
         <Icon guid="ImageCatalogGuid" id="CopyDynamicValue" />
         <CommandFlag>IconIsMoniker</CommandFlag>
         <Strings>
-          <ButtonText>Copy method tree</ButtonText>
+          <ButtonText>Copy Deep</ButtonText>
+		  <ToolTipText>Copies the selected method and all its dependent methods to clipboard</ToolTipText>
           <LocCanonicalName>.Edit.CopyMethodTree</LocCanonicalName>
         </Strings>
       </Button>
