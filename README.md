@@ -26,9 +26,9 @@
 
 ## 🧩 How It Works
 
-1. Right-click on a method in the code editor
+1. Select the method in the code editor
 2. Select **Edit > Copy Deep**
-3. A new class will be generated with the selected method and all its dependencies included
+3. The selected method and all its dependencies will be copied to the clipboard
 
 ---
 
@@ -43,15 +43,14 @@
 
 ## 📥 Installation
 
-1. Download from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/)
-2. Install the `.vsix` file or search for **Copy Deep** in **Extensions > Manage Extensions**
+1. Download from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=methodcopier)
+2. Install the `.vsix` file or search for **MethodCopier** in **Extensions > Manage Extensions**
 
 ---
 
 ## 🙋‍♂️ About the Author
 
-I'm a solo developer passionate about productivity tools.  
-This project was built to help developers modernize their codebases more efficiently.
+Independent developer. Passionate about clean architecture, modular code, and enhancing the developer experience.
 
 ---
 
@@ -64,5 +63,5 @@ MIT License — free to use, modify, and distribute.
 ## 💡 Feedback & Contributions
 
 Issues, ideas, or feature requests?  
-Feel free to [open an issue](https://github.com/yourusername/copy-deep/issues) or submit a PR!
+Feel free to [open an issue](https://github.com/fediaza/MethodCopier/issues) or submit a PR!
 
