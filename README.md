@@ -20,7 +20,7 @@
 
 ## 📸 Screenshot
 
-![Copy Deep Demo](./assets/screenshot.png)
+![Copy Deep Demo](assets/screenshot.png)
 
 ---
 
