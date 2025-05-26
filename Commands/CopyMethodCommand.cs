@@ -1,9 +1,16 @@
 ﻿using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using Community.VisualStudio.Toolkit;
 using EnvDTE;
+using ICSharpCode.Decompiler;
+using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.CSharp.Syntax;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -188,7 +195,7 @@ namespace MethodCopier
                 ?? symbolInfo.CandidateSymbols.FirstOrDefault() as IMethodSymbol;
         }
 
-        private static async Task<string> GenerateSourceWithDependenciesAsync(
+        private static async Task<string> GenerateSourceWithDependenciesAsync1(
             IEnumerable<IMethodSymbol> methods, Solution solution)
         {
             var classes = methods
@@ -264,6 +271,256 @@ namespace MethodCopier
 
             return sb.ToString();
         }
+
+
+
+
+        private static async Task<string> GenerateSourceWithDependenciesAsync(
+        IEnumerable<IMethodSymbol> methods, Solution solution)
+        {
+            var sb = new StringBuilder();
+            var processedTypes = new HashSet<ITypeSymbol>();
+            var processedNamespaces = new HashSet<string>();
+
+            // Group by containing type
+            var methodsByType = methods
+                .Where(m => m.ContainingType != null)
+                .GroupBy(m => m.ContainingType)
+                .OrderBy(g => g.Key?.ToDisplayString());
+
+            foreach (var typeGroup in methodsByType)
+            {
+                var typeSymbol = typeGroup.Key;
+                var methodsInType = typeGroup.ToList();
+
+                // Handle namespace
+                if (typeSymbol.ContainingNamespace != null)
+                {
+                    var ns = typeSymbol.ContainingNamespace.ToDisplayString();
+                    if (processedNamespaces.Add(ns))
+                    {
+                        sb.AppendLine($"namespace {ns}");
+                        sb.AppendLine("{");
+                    }
+                }
+
+                // Type declaration
+                if (processedTypes.Add(typeSymbol))
+                {
+                    sb.AppendLine(GetTypeDeclaration(typeSymbol));
+                    sb.AppendLine("{");
+                }
+
+                // Process methods
+                foreach (var method in methodsInType.OrderBy(m => m.Name))
+                {
+                    sb.AppendLine(await GetMethodSourceAsync(method, solution));
+                    sb.AppendLine();
+                }
+
+                sb.AppendLine("}");
+
+                // Close namespace if needed
+                if (typeSymbol.ContainingNamespace != null)
+                {
+                    var ns = typeSymbol.ContainingNamespace.ToDisplayString();
+                    if (!methodsByType.Any(g => g.Key.ContainingNamespace?.ToDisplayString() == ns &&
+                                              !processedTypes.Contains(g.Key)))
+                    {
+                        sb.AppendLine("}");
+                        sb.AppendLine();
+                    }
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        private static async Task<string> GetMethodSourceAsync(IMethodSymbol method, Solution solution)
+        {
+            // For VB.NET methods - try to decompile and convert
+            if (method.Language == LanguageNames.VisualBasic)
+            {
+                try
+                {
+                    // Option 1: Try to get source via Roslyn first
+                    if (method.DeclaringSyntaxReferences.Length > 0)
+                    {
+                        var syntaxRef = method.DeclaringSyntaxReferences[0];
+                        var vbSyntax = await syntaxRef.GetSyntaxAsync();
+                        var vbDocument = solution.GetDocument(syntaxRef.SyntaxTree);
+
+                        // Use Roslyn's VB->C# conversion
+                        var csharpCode = await ConvertVbToCSharpAsync(vbSyntax.ToFullString(), vbDocument);
+                        return IndentMethodBody(csharpCode);
+                    }
+
+                    foreach (var project in solution.Projects)
+                    {
+                        var compilation = await project.GetCompilationAsync();
+                        var decompiled = DecompileMethod(method, compilation);
+                        if (!string.IsNullOrEmpty(decompiled))
+                        {
+                            var csharpCode = await ConvertVbToCSharpAsync(decompiled);
+                            return IndentMethodBody(csharpCode);
+                        }
+                    }
+
+                    // Option 2: Decompile from metadata if source not available
+                }
+                catch (Exception ex)
+                {
+                    await ex.LogAsync();
+                    // Fall through to signature-only version
+                }
+            }
+
+            // Fallback for C# methods or when conversion fails
+            return await GetMethodSourceFallbackAsync(method, solution);
+        }
+
+        private static async Task<string> ConvertVbToCSharpAsync(string vbCode, Microsoft.CodeAnalysis.Document vbDocument = null)
+        {
+            var workspace = vbDocument?.Project.Solution.Workspace;
+
+            if (workspace is null)
+            {
+                var componentModel = await VS.GetServiceAsync<SComponentModel, IComponentModel>();
+                workspace = componentModel.GetService<VisualStudioWorkspace>();
+            }
+
+            string fromLanguage = LanguageNames.VisualBasic;
+            string toLanguage = LanguageNames.CSharp;
+
+            var codeWithOptions = new ICSharpCode.CodeConverter.CodeWithOptions(vbCode)
+               .SetFromLanguage(fromLanguage)
+               .SetToLanguage(toLanguage);
+
+            var convertionResult = await ICSharpCode.CodeConverter.CodeConverter.Convert(codeWithOptions);
+
+            if (convertionResult.Exceptions.Count > 0)
+            {
+                return vbCode;
+            }
+
+            //var conversionService = new CSharpConverter();
+            //var converted = await conversionService.ConvertTextAsync(vbCode, workspace);
+            return convertionResult.ConvertedCode;
+        }
+
+        private static string DecompileMethod(IMethodSymbol method, Compilation compilation)
+        {
+            try
+            {
+                var assemblySymbol = method.ContainingAssembly;
+
+                string assemblyPath = null;
+
+                foreach (var reference in compilation.References)
+                {
+                    var symbol = compilation.GetAssemblyOrModuleSymbol(reference) as IAssemblySymbol;
+                    if (symbol != null && SymbolEqualityComparer.Default.Equals(symbol, assemblySymbol))
+                    {
+                        if (reference is PortableExecutableReference peRef)
+                        {
+                            assemblyPath = peRef.FilePath;
+                            break;
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(assemblyPath)) return null;
+
+                var decompiler = new CSharpDecompiler(assemblyPath,
+                    new DecompilerSettings
+                    {
+                        ThrowOnAssemblyResolveErrors = false,
+                        ShowXmlDocumentation = true
+                    });
+
+                var typeName = method.ContainingType.ToDisplayString(
+                    SymbolDisplayFormat.FullyQualifiedFormat)
+                    .Replace("global::", "");
+
+                var typeCode = decompiler.DecompileTypeAsString(
+                    new ICSharpCode.Decompiler.TypeSystem.FullTypeName(typeName));
+
+                return ExtractMethodFromTypeCode(typeCode, method.Name);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ExtractMethodFromTypeCode(string typeCode, string methodName)
+        {
+            // This is a simplified approach - consider using proper parsing for production
+            var methodPattern = $@"(public|private|protected|internal)\s+.+\s+{methodName}\s*\([^)]*\)[^{{]*{{[^}}]*}}";
+            var match = Regex.Match(typeCode, methodPattern, RegexOptions.Singleline);
+            return match.Success ? match.Value : null;
+        }
+
+        //private static string DecompileMethod(IMethodSymbol method, Compilation compilation)
+        //{
+        //    try
+        //    {
+        //        // Use ILSpy to decompile
+        //        var assemblyLocation = method.ContainingAssembly?.Locations.FirstOrDefault()?.FilePath;
+        //        if (string.IsNullOrEmpty(assemblyLocation)) return null;
+
+        //        var decompiler = new CSharpDecompiler(assemblyLocation,
+        //            new DecompilerSettings
+        //            {
+        //                ThrowOnAssemblyResolveErrors = false,
+        //                ShowXmlDocumentation = true
+        //            });
+
+        //        var typeName = method.ContainingType.ToDisplayString(
+        //            SymbolDisplayFormat.FullyQualifiedFormat)
+        //            .Replace("global::", "");
+
+        //        var methodToken = method.GetSymbolToken();
+        //        if (methodToken == 0) return null;
+
+        //        return decompiler.DecompileAsString(typeName, methodToken);
+        //    }
+        //    catch
+        //    {
+        //        return null;
+        //    }
+        //}
+
+        private static async Task<string> GetMethodSourceFallbackAsync(IMethodSymbol method, Solution solution)
+        {
+            // For C# methods or when conversion fails
+            if (method.DeclaringSyntaxReferences.Length > 0)
+            {
+                var syntaxRef = method.DeclaringSyntaxReferences[0];
+                var syntax = await syntaxRef.GetSyntaxAsync();
+                var document = solution.GetDocument(syntaxRef.SyntaxTree);
+
+                if (document != null)
+                {
+                    var formatted = Formatter.Format(syntax, document.Project.Solution.Workspace);
+                    return IndentMethodBody(formatted.ToFullString());
+                }
+            }
+
+            // Generate just the signature if no source available
+            return GetMethodSignature(method);
+        }
+
+        private static string IndentMethodBody(string code)
+        {
+            return string.Join(Environment.NewLine,
+                code.Split(new[] { Environment.NewLine }, StringSplitOptions.None)
+                .Select(line => "    " + line));
+        }
+
+
+
+
 
         private static string GetMethodSignature(IMethodSymbol method)
         {

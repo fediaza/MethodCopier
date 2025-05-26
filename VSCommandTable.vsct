@@ -9,7 +9,8 @@
   <Commands package="MethodCopier">
     <Groups>
       <Group guid="MethodCopier" id="MyMenuGroup" priority="0x0600">
-		<Parent guid="VSMainMenu" id="Edit"/>
+		<!--<Parent guid="VSMainMenu" id="CodeWindow.TextEditGroup"/>-->
+		<Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_CODEWIN"/>
       </Group>
     </Groups>
 
