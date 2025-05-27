@@ -11,6 +11,7 @@ using EnvDTE;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
 using ICSharpCode.Decompiler.CSharp.Syntax;
+using ICSharpCode.Decompiler.Metadata;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -359,6 +360,7 @@ namespace MethodCopier
                     {
                         var compilation = await project.GetCompilationAsync();
                         var decompiled = DecompileMethod(method, compilation);
+
                         if (!string.IsNullOrEmpty(decompiled))
                         {
                             var csharpCode = await ConvertVbToCSharpAsync(decompiled);
@@ -407,8 +409,62 @@ namespace MethodCopier
             //var converted = await conversionService.ConvertTextAsync(vbCode, workspace);
             return convertionResult.ConvertedCode;
         }
+        private static string DecompileMethod(IMethodSymbol methodSymbol, Compilation compilation)
+        {
 
-        private static string DecompileMethod(IMethodSymbol method, Compilation compilation)
+            var assemblySymbol = methodSymbol.ContainingAssembly;
+
+            string assemblyPath = null;
+
+            foreach (var reference in compilation.References)
+            {
+                var symbol = compilation.GetAssemblyOrModuleSymbol(reference) as IAssemblySymbol;
+                if (symbol != null && SymbolEqualityComparer.Default.Equals(symbol, assemblySymbol))
+                {
+                    if (reference is PortableExecutableReference peRef)
+                    {
+                        assemblyPath = peRef.FilePath;
+                        break;
+                    }
+                }
+            }
+
+            if (string.IsNullOrEmpty(assemblyPath)) return null;
+
+            // 2. Setup Decompiler
+            var peFile = new PEFile(assemblyPath);
+            var resolver = new UniversalAssemblyResolver(assemblyPath, false, peFile.DetectTargetFrameworkId());
+            var decompiler = new CSharpDecompiler(assemblyPath, resolver, new DecompilerSettings());
+
+            // 3. Find the IMethod in the Decompiler TypeSystem
+            var typeSystem = decompiler.TypeSystem;
+            var mainModule = typeSystem.MainModule;
+
+            var topLevelTypeName = new ICSharpCode.Decompiler.TypeSystem.TopLevelTypeName(
+                methodSymbol.ContainingNamespace.ToDisplayString(),
+                methodSymbol.ContainingType.Name
+                );
+
+            var type = mainModule.GetTypeDefinition(topLevelTypeName);
+
+
+            if (type == null)
+                throw new Exception("Type not found in PE file");
+
+            // Match method by name + parameter count (you can extend this match as needed)
+            var method = type.Methods.FirstOrDefault(m =>
+                m.Name == methodSymbol.Name &&
+                m.Parameters.Count == methodSymbol.Parameters.Length);
+
+            if (method == null)
+                throw new Exception("Method not found in PE file");
+
+            // 4. Decompile that method
+            return decompiler.DecompileAsString(method.MetadataToken);
+        }
+
+
+        private static string DecompileMethod1(IMethodSymbol method, Compilation compilation)
         {
             try
             {
